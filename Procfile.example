@@ -1,0 +1,1 @@
+web: python -m gunicorn -w 3 -b localhost:$PORT "ad_automator.app:create_app()" 
