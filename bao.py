@@ -83,7 +83,8 @@ def configure_app(tmp_path: Path):
     """
     apps/
         <appname>/
-            root_src/ (git source code)
+            root_src/ (source code)
+            git/ (git bare repo)
             <appname>.service
             Caddyfile
 
@@ -154,6 +155,8 @@ def configure_app(tmp_path: Path):
     app_caddy_config_path = app_path / "Caddyfile"
     app_caddy_config_path.write_text(app_caddy_config)
 
+    if (CADDYFILES_PATH / app_name).exists():
+        (CADDYFILES_PATH / app_name).unlink()
     (CADDYFILES_PATH / app_name).symlink_to(app_caddy_config_path)
 
     # -- start app
