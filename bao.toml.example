@@ -1,0 +1,7 @@
+[apps.ad_automator_prod]
+domain = "adautomator.com" 
+procfile = "Procfile" # default
+
+[apps.ad_automator_test]
+domain = "test.adautomator.com"
+procfile = "Procfile.test"

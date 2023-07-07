@@ -1,13 +1,16 @@
-from dataclasses import dataclass
-from pathlib import Path
+#!/usr/bin/env python3.11
+import sys
+
+if sys.version_info < (3, 11):
+    sys.exit("Python 3.11 required")
+
 import shutil
 import subprocess
-import sys
 import tempfile
-import requests
+import tomllib
 
-# import tomllib
-
+from pathlib import Path
+from dataclasses import dataclass
 
 ROOT_PATH = Path(".").resolve()
 APPS_ROOT_PATH = ROOT_PATH / "apps"
@@ -75,11 +78,20 @@ def get_app_caddyfile_config(domain: str, app_root_src_path: str, port: int):
     )
 
 
-def add_caddyfile_entry(app_caddyfile: Path):
-    f"import {app_caddyfile}"
+@dataclass
+class BaoConfigApp:
+    domain: str
+    procfile: str = "Procfile"
 
 
-def configure_app(tmp_path: Path):
+@dataclass
+class BaoConfig:
+    """bao.toml"""
+
+    apps: dict[str, BaoConfigApp]
+
+
+def configure_app(app_name: str, tmp_path: Path):
     """
     apps/
         <appname>/
@@ -89,6 +101,10 @@ def configure_app(tmp_path: Path):
             Caddyfile
 
     """
+    if not (tmp_path / "bao.toml").exists():
+        print("bao.toml not detected")
+        sys.exit()
+
     if not (tmp_path / "pyproject.toml").exists():
         print("pyproject.toml not detected")
         sys.exit(1)
@@ -98,14 +114,17 @@ def configure_app(tmp_path: Path):
         sys.exit(1)
 
     # -- parse project config
-    # with open(tmp_path / "pyproject.toml") as f:
-    #     pyproject = tomllib.load(f)
+    with open(tmp_path / "bao.toml") as f:
+        bao_config = BaoConfig(**tomllib.load(f))
 
-    with open(tmp_path / "Procfile") as f:
+    app_config = bao_config.apps.get(app_name)
+    if not app_config:
+        print(f"{app_name} not found in bao config")
+        sys.exit(1)
+
+    with open(app_config.procfile) as f:
         procfile = parse_procfile(f.read())
 
-    # app_name = pyproject["name"]
-    app_name = tmp_path.stem
     app_path = APPS_ROOT_PATH / app_name
     app_path.mkdir(parents=True, exist_ok=True)
     app_root_src_path = app_path / "root_src"
@@ -220,4 +239,4 @@ import {CADDYFILES_PATH!s}/*
 if __name__ == "__main__":
     print("[Bao]")
     init()
-    configure_app(Path("/tmp/ad_automator_test"))
+    configure_app("ad_automator_test", Path("/tmp/ad_automator_test"))
