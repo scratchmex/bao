@@ -1,4 +1,6 @@
 #!/usr/bin/env python3.11
+import argparse
+import io
 import sys
 
 if sys.version_info < (3, 11):
@@ -12,11 +14,10 @@ import tomllib
 from pathlib import Path
 from dataclasses import dataclass
 
-ROOT_PATH = Path(".").resolve()
+ROOT_PATH = Path("~").resolve()
 APPS_ROOT_PATH = ROOT_PATH / "apps"
 CADDYFILES_PATH = ROOT_PATH / "caddyfiles"
-
-
+SYSTEMDFILES_PATH = ROOT_PATH / "systemdfiles"
 SYSTEMCTL_RESTART_INTERVAL = 3
 
 
@@ -33,7 +34,7 @@ WorkingDirectory={working_directory}
 ExecStart={web_cmd}
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 """.strip()
 
 
@@ -91,13 +92,13 @@ class BaoConfig:
     apps: dict[str, BaoConfigApp]
 
 
-def configure_app(app_name: str, tmp_path: Path):
+def add_app(app_name: str, tmp_path: Path):
     """
     apps/
         <appname>/
             root_src/ (source code)
             git/ (git bare repo)
-            <appname>.service
+            systemd.service
             Caddyfile
 
     """
@@ -109,10 +110,6 @@ def configure_app(app_name: str, tmp_path: Path):
         print("pyproject.toml not detected")
         sys.exit(1)
 
-    if not (tmp_path / "Procfile").exists():
-        print("Procfile not detected")
-        sys.exit(1)
-
     # -- parse project config
     with open(tmp_path / "bao.toml") as f:
         bao_config = BaoConfig(**tomllib.load(f))
@@ -122,7 +119,11 @@ def configure_app(app_name: str, tmp_path: Path):
         print(f"{app_name} not found in bao config")
         sys.exit(1)
 
-    with open(app_config.procfile) as f:
+    if not (tmp_path / app_config.procfile).exists():
+        print(f"{app_config.procfile} not detected")
+        sys.exit(1)
+
+    with open(tmp_path / app_config.procfile) as f:
         procfile = parse_procfile(f.read())
 
     app_path = APPS_ROOT_PATH / app_name
@@ -148,61 +149,67 @@ def configure_app(app_name: str, tmp_path: Path):
         working_directory=app_root_src_path,
         description=f"{app_name} configured by bao",
     )
-    service_name = f"{app_name}.service"
-    with open(app_path / service_name, "w") as f:
+    app_service_path = app_path / "systemd.service"
+    with open(app_service_path, "w") as f:
         f.write(systemctl_config)
 
-    subprocess.run(
-        [
-            "sudo",
-            "ln",
-            "-sf",
-            str(app_path / service_name),
-            f"/etc/systemd/system/{app_name}.service",
-        ],
-        check=True,
-    )
+    app_service_name = f"{app_name}.service"
+    app_service_symlink_path = SYSTEMDFILES_PATH / app_service_name
+    if app_service_symlink_path.is_symlink():
+        app_service_symlink_path.unlink()
+    app_service_symlink_path.symlink_to(app_service_path)
 
-    subprocess.run(["sudo", "systemctl", "enable", service_name], check=True)
+    subprocess.run(["systemctl", "--user", "enable", app_service_name], check=True)
 
     # -- configure caddy
     app_caddy_config = get_app_caddyfile_config(
-        domain="test.adautomator.com",
+        domain=app_config.domain,
         app_root_src_path=app_root_src_path,
         port=app_port,
     )
     app_caddy_config_path = app_path / "Caddyfile"
     app_caddy_config_path.write_text(app_caddy_config)
 
-    if (CADDYFILES_PATH / app_name).exists():
+    if (CADDYFILES_PATH / app_name).is_symlink():
         (CADDYFILES_PATH / app_name).unlink()
     (CADDYFILES_PATH / app_name).symlink_to(app_caddy_config_path)
 
     # -- start app
     subprocess.run(["sudo", "systemctl", "reload", "caddy"], check=True)
-    subprocess.run(["sudo", "systemctl", "start", service_name], check=True)
+    subprocess.run(["systemctl", "--user", "start", app_service_name], check=True)
 
 
-def setup_authorized_keys():
-    """command="{entrypoint_path} $SSH_ORIGINAL_COMMAND",no-agent-forwarding,no-user-rc,no-X11-forwarding,no-port-forwarding {pubkey}\n"""
+def remove_app(app_name: str):
+    app_path = APPS_ROOT_PATH / app_name
+
+    app_service_name = f"{app_name}.service"
+    subprocess.run(["systemctl", "--user", "stop", app_service_name], check=True)
+    subprocess.run(["systemctl", "--user", "disable", app_service_name], check=True)
+    subprocess.run(["sudo", "systemctl", "reload", "caddy"], check=True)
+
+    shutil.rmtree(app_path)
+
+    files_to_delete = (
+        SYSTEMDFILES_PATH / f"{app_name}.service",
+        CADDYFILES_PATH / app_name,
+    )
+    for file in files_to_delete:
+        if file.is_file():
+            file.unlink()
 
 
-def init():
-    """
-    apps/
-    caddyfiles/
-        Caddyfile
-        <appname> -> ../apps/<appname>/Caddyfile
-    """
+def cmd_del(args: argparse.Namespace):
+    app_name = args.app_name
+    remove_app(app_name)
 
-    for dir in (APPS_ROOT_PATH, CADDYFILES_PATH):
-        dir.mkdir(parents=True, exist_ok=True)
 
-    # -- install deps
-    subprocess.run(["poetry", "config", "virtualenvs.in-project", "true"])
-    # -- configure poetry
+def init_systemctl():
+    # init user systemd on boot
+    # ref: https://wiki.archlinux.org/title/systemd/User#Automatic_start-up_of_systemd_user_instances
+    subprocess.run(["sudo", "loginctl", "enable-linger", "bao"], check=True)
 
-    # -- setup default caddyfile
+
+def init_caddy():
     with open(CADDYFILES_PATH / "Caddyfile", "w") as f:
         f.write(
             """
@@ -220,7 +227,7 @@ import {CADDYFILES_PATH!s}/*
 
 """
 
-    if global_caddyfile.exists():
+    if global_caddyfile.is_file():
         existent_config = global_caddyfile.read_text()
         if config in existent_config:
             config = ""
@@ -232,11 +239,98 @@ import {CADDYFILES_PATH!s}/*
     subprocess.run(["sudo", "mv", tf.name, str(global_caddyfile)], check=True)
     subprocess.run(["sudo", "chmod", "755", str(global_caddyfile)], check=True)
 
+    # -- configure sudoers
+    with tempfile.NamedTemporaryFile("w", delete=False) as tf:
+        tf.write("bao ALL=(root) NOPASSWD: /usr/bin/systemctl reload caddy\n")
+
+    subprocess.run(["sudo", "mv", tf.name, "/etc/sudoers.d/bao-caddy"], check=True)
+    subprocess.run(
+        ["sudo", "chown", "root:root", "/etc/sudoers.d/bao-caddy"], check=True
+    )
+
+
+AUTHORIZED_KEYS_TEMPLATE = """command="{entrypoint_path} $SSH_ORIGINAL_COMMAND",no-agent-forwarding,no-user-rc,no-X11-forwarding,no-port-forwarding {pubkey}\n"""
+
+
+def init_ssh_access():
+    baoscript = Path(__file__).resolve()
+    authorized_keys_path = Path("~/.ssh/authorized_keys")
+    authorized_keys = authorized_keys_path.read_text()
+
+    new_authorized_keys = io.StringIO()
+    for line in authorized_keys.splitlines():
+        if not line.startswith("ssh-"):
+            new_authorized_keys.write(line)
+            continue
+
+        new_authorized_keys.write(
+            AUTHORIZED_KEYS_TEMPLATE.format(
+                entrypoint_path=str(baoscript), pubkey=line.strip()
+            )
+        )
+
+    with open(authorized_keys_path, "w") as f:
+        f.write(new_authorized_keys.getvalue())
+
+
+def init():
+    """
+    apps/
+    caddyfiles/
+        Caddyfile
+        <appname> -> ../apps/<appname>/Caddyfile
+    systemdfiles/
+        <appname>.service -> ../apps/<appname>/systemd.service
+    """
+    subprocess.run(["sudo", "echo", "sudo access ok"], check=True)
+
+    ROOT_PATH = Path("/home/bao")
+    for dir in (
+        ROOT_PATH / "apps",
+        ROOT_PATH / "caddyfiles",
+        ROOT_PATH / ".config/systemd/user",
+    ):
+        dir.mkdir(parents=True, exist_ok=True)
+
+    systemdfiles_path = ROOT_PATH / "systemdfiles"
+    if systemdfiles_path.is_symlink():
+        systemdfiles_path.unlink()
+    (ROOT_PATH / "systemdfiles").symlink_to(ROOT_PATH / ".config/systemd/user")
+
+    # -- install deps
+    # -- configure poetry
+    subprocess.run(["poetry", "config", "virtualenvs.in-project", "true"])
+
+    init_systemctl()
+
+    init_caddy()
+
+    init_ssh_access()
+
+    subprocess.run(["sudo", "chown", "-R", "bao:bao", str(ROOT_PATH)], check=True)
+
 
 # --- CLI commands
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser("bao", description="PaaS for Python")
+    subparser = parser.add_subparsers()
+
+    init_parser = subparser.add_parser("init", description="init bao")
+    init_parser.set_defaults(handle=init)
+
+    del_parser = subparser.add_parser("del", description="delete an app")
+    del_parser.add_argument("app_name")
+    del_parser.set_defaults(handle=cmd_del)
+
     print("[Bao]")
-    init()
-    configure_app("ad_automator_test", Path("/tmp/ad_automator_test"))
+
+    args = parser.parse_args(sys.argv[1:] or ["--help"])
+
+    # TODO: add validation that if command is different than init, it should be bao user
+
+    args.handle()
+
+    # init()
+    # configure_app("ad_automator_test", Path("/tmp/ad_automator_test"))
