@@ -14,7 +14,7 @@ import tomllib
 from pathlib import Path
 from dataclasses import dataclass
 
-ROOT_PATH = Path("~").resolve()
+ROOT_PATH = Path("/home/bao").resolve()
 APPS_ROOT_PATH = ROOT_PATH / "apps"
 CADDYFILES_PATH = ROOT_PATH / "caddyfiles"
 SYSTEMDFILES_PATH = ROOT_PATH / "systemdfiles"
@@ -254,7 +254,7 @@ AUTHORIZED_KEYS_TEMPLATE = """command="{entrypoint_path} $SSH_ORIGINAL_COMMAND",
 
 def init_ssh_access():
     baoscript = Path(__file__).resolve()
-    authorized_keys_path = Path("~/.ssh/authorized_keys")
+    authorized_keys_path = Path("/home/bao/.ssh/authorized_keys")
     authorized_keys = authorized_keys_path.read_text()
 
     new_authorized_keys = io.StringIO()
@@ -282,12 +282,12 @@ def init():
     systemdfiles/
         <appname>.service -> ../apps/<appname>/systemd.service
     """
-    subprocess.run(["sudo", "echo", "sudo access ok"], check=True)
+    subprocess.run("sudo echo 'sudo access ok'", shell=True, check=True)
 
-    ROOT_PATH = Path("/home/bao")
+    subprocess.run(["sudo", "chmod", "-R", "o=rwx", str(ROOT_PATH)], check=True)
     for dir in (
-        ROOT_PATH / "apps",
-        ROOT_PATH / "caddyfiles",
+        APPS_ROOT_PATH,
+        CADDYFILES_PATH,
         ROOT_PATH / ".config/systemd/user",
     ):
         dir.mkdir(parents=True, exist_ok=True)
@@ -307,6 +307,7 @@ def init():
 
     init_ssh_access()
 
+    subprocess.run(["sudo", "chmod", "-R", "o=rx", str(ROOT_PATH)], check=True)
     subprocess.run(["sudo", "chown", "-R", "bao:bao", str(ROOT_PATH)], check=True)
 
 
@@ -325,6 +326,7 @@ if __name__ == "__main__":
     del_parser.set_defaults(handle=cmd_del)
 
     print("[Bao]")
+    print(f"{sys.argv=}")
 
     args = parser.parse_args(sys.argv[1:] or ["--help"])
 

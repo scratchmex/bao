@@ -13,6 +13,6 @@ sudo cp bao.py /home/bao
 sudo chmod +x /home/bao/bao.py
 sudo chown bao:bao /home/bao/bao.py
 sudo su - bao -c 'curl -sSL https://install.python-poetry.org | python3 -'
-sudo su - bao -c './bao.py init'
+/home/bao/bao.py init
 
 echo "[==] installed :)"
