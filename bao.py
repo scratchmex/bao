@@ -2,6 +2,7 @@
 import argparse
 import io
 import logging
+import stat
 import sys
 
 if sys.version_info < (3, 11):
@@ -118,9 +119,14 @@ def add_app(app_name: str, tmp_path: Path):
     shutil.move(tmp_path, app_path)
 
     git_path = app_path / "git"
+    git_hook_path = git_path / "hooks" / "post-receive"
 
-    with open(git_path / "hooks" / "post-receive", "w") as f:
-        f.write("/home/bao/bao.py git-hook")
+    with open(git_hook_path, "w") as f:
+        f.write("""#!/usr/bin/env bash
+set -e; set -o pipefail;
+cat | /home/bao/bao.py git-hook
+""")
+    git_hook_path.chmod(git_hook_path.stat().st_mode | stat.S_IXUSR)
 
     res = subprocess.run(
         ["git", "branch", "-l"], cwd=git_path, stdout=subprocess.PIPE, check=True
@@ -345,7 +351,7 @@ def cmd_del(args: argparse.Namespace):
     remove_app(app_name)
 
 
-def cmd_git_receive_pack_parser(args: argparse.Namespace):
+def cmd_git_receive_pack(args: argparse.Namespace):
     app_name: str = args.app_name[1:-1]  # remove quotes
     app_path = APPS_ROOT_PATH / app_name
 
@@ -397,7 +403,7 @@ if __name__ == "__main__":
         "git-receive-pack", description="[internal git] used in push"
     )
     git_receive_pack_parser.add_argument("app_name")
-    git_receive_pack_parser.set_defaults(handle=cmd_git_receive_pack_parser)
+    git_receive_pack_parser.set_defaults(handle=cmd_git_receive_pack)
 
     git_receive_pack_parser = subparser.add_parser(
         "git-hook", description="[internal git] used in post-receive hook"
