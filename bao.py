@@ -1,6 +1,7 @@
 #!/usr/bin/env python3.11
 import argparse
 import io
+import logging
 import sys
 
 if sys.version_info < (3, 11):
@@ -13,6 +14,12 @@ import tomllib
 
 from pathlib import Path
 from dataclasses import dataclass
+
+
+logging.basicConfig(filename="default.log", level=logging.DEBUG)
+
+logger = logging.getLogger(__name__)
+
 
 ROOT_PATH = Path("/home/bao").resolve()
 APPS_ROOT_PATH = ROOT_PATH / "apps"
@@ -50,11 +57,11 @@ def parse_procfile(content: str):
             web_cmd = line.split(":", maxsplit=1)[-1].strip()
 
     if not web_cmd.startswith("python"):
-        print("web cmd should start with python")
+        logger.info("web cmd should start with python")
         sys.exit(1)
 
     if "$PORT" not in web_cmd:
-        print("$PORT is not present on web cmd")
+        logger.info("$PORT is not present on web cmd")
         sys.exit(1)
 
     return Procfile(web_cmd=web_cmd)
@@ -102,35 +109,57 @@ def add_app(app_name: str, tmp_path: Path):
             Caddyfile
 
     """
-    if not (tmp_path / "bao.toml").exists():
-        print("bao.toml not detected")
-        sys.exit()
+    if not (tmp_path / "git").is_dir():
+        logger.info("could not find git repo")
+        sys.exit(1)
 
-    if not (tmp_path / "pyproject.toml").exists():
-        print("pyproject.toml not detected")
+    # -- move files to our domain
+    app_path = APPS_ROOT_PATH / app_name
+    shutil.move(tmp_path, app_path)
+
+    git_path = app_path / "git"
+
+    with open(git_path / "hooks" / "post-receive", "w") as f:
+        f.write("/home/bao/bao.py git-hook")
+
+    res = subprocess.run(
+        ["git", "branch", "-l"], cwd=git_path, stdout=subprocess.PIPE, check=True
+    )
+    any_branch_name = res.stdout.decode().strip().splitlines()[-1]
+    subprocess.run(
+        ["git", "clone", "git", "root_src", "-b", any_branch_name],
+        cwd=app_path,
+        check=True,
+    )
+
+
+def deploy_app(app_name: str):
+    app_path = APPS_ROOT_PATH / app_name
+    app_root_src_path = app_path / "root_src"
+
+    if not (app_root_src_path / "bao.toml").exists():
+        logger.info("bao.toml not detected")
+        sys.exit(1)
+
+    if not (app_root_src_path / "pyproject.toml").exists():
+        logger.info("pyproject.toml not detected")
         sys.exit(1)
 
     # -- parse project config
-    with open(tmp_path / "bao.toml") as f:
+    with open(app_root_src_path / "bao.toml") as f:
         bao_config = BaoConfig(**tomllib.load(f))
 
     app_config = bao_config.apps.get(app_name)
     if not app_config:
-        print(f"{app_name} not found in bao config")
+        logger.info(f"{app_name} not found in bao config")
         sys.exit(1)
 
-    if not (tmp_path / app_config.procfile).exists():
-        print(f"{app_config.procfile} not detected")
+    if not (app_root_src_path / app_config.procfile).exists():
+        logger.info(f"{app_config.procfile} not detected")
         sys.exit(1)
 
-    with open(tmp_path / app_config.procfile) as f:
+    with open(app_root_src_path / app_config.procfile) as f:
         procfile = parse_procfile(f.read())
-
-    app_path = APPS_ROOT_PATH / app_name
-    app_path.mkdir(parents=True, exist_ok=True)
-    app_root_src_path = app_path / "root_src"
-    # -- move files to our domain
-    shutil.move(tmp_path, app_root_src_path)
 
     # -- configure poetry
     subprocess.run(["poetry", "install"], cwd=app_root_src_path, check=True)
@@ -142,7 +171,7 @@ def add_app(app_name: str, tmp_path: Path):
     app_port = 8000
     # TODO: look for ports
     web_cmd = web_cmd.replace("$PORT", str(app_port))
-    print(f"will use the following web cmd: {web_cmd!r}")
+    logger.info(f"will use the following web cmd: {web_cmd!r}")
 
     systemctl_config = get_systemctl_config(
         web_cmd=f"{app_root_src_path / '.venv/bin'}/{web_cmd}",
@@ -196,11 +225,6 @@ def remove_app(app_name: str):
     for file in files_to_delete:
         if file.is_file():
             file.unlink()
-
-
-def cmd_del(args: argparse.Namespace):
-    app_name = args.app_name
-    remove_app(app_name)
 
 
 def init_systemctl():
@@ -312,6 +336,50 @@ def init():
 
 
 # --- CLI commands
+def cmd_init(args: argparse.Namespace):
+    init()
+
+
+def cmd_del(args: argparse.Namespace):
+    app_name = args.app_name
+    remove_app(app_name)
+
+
+def cmd_git_receive_pack_parser(args: argparse.Namespace):
+    app_name: str = args.app_name[1:-1]  # remove quotes
+    app_path = APPS_ROOT_PATH / app_name
+
+    tmp_dir = None  # if not None it means it is a new app
+
+    if not app_path.is_dir():
+        tmp_dir = tempfile.TemporaryDirectory()
+        app_path = Path(tmp_dir.name)
+        subprocess.run(
+            ["git", "init", "--bare", "git"],
+            cwd=app_path,
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+
+    logger.info(f"cwd {app_path}")
+
+    print("---------> before")
+    subprocess.run(
+        ["git", "shell", "-c", "git receive-pack 'git'"], cwd=app_path, check=True
+    )
+    print("---------> after")
+
+    if tmp_dir:
+        add_app(app_name, app_path)
+        tmp_dir.cleanup()
+
+    # deploy_app(app_name)
+
+
+def cmd_git_hook(args: argparse.Namespace):
+    logger.info("git-hook called")
+    for line in sys.stdin:
+        logger.debug(line)
 
 
 if __name__ == "__main__":
@@ -319,20 +387,33 @@ if __name__ == "__main__":
     subparser = parser.add_subparsers()
 
     init_parser = subparser.add_parser("init", description="init bao")
-    init_parser.set_defaults(handle=init)
+    init_parser.set_defaults(handle=cmd_init)
 
     del_parser = subparser.add_parser("del", description="delete an app")
     del_parser.add_argument("app_name")
     del_parser.set_defaults(handle=cmd_del)
 
-    print("[Bao]")
-    print(f"{sys.argv=}")
+    git_receive_pack_parser = subparser.add_parser(
+        "git-receive-pack", description="[internal git] used in push"
+    )
+    git_receive_pack_parser.add_argument("app_name")
+    git_receive_pack_parser.set_defaults(handle=cmd_git_receive_pack_parser)
+
+    git_receive_pack_parser = subparser.add_parser(
+        "git-hook", description="[internal git] used in post-receive hook"
+    )
+    git_receive_pack_parser.set_defaults(handle=cmd_git_hook)
+
+    # logger.info("[Bao]")
+    # logger.info(f"{sys.argv=}")
 
     args = parser.parse_args(sys.argv[1:] or ["--help"])
 
     # TODO: add validation that if command is different than init, it should be bao user
-
-    args.handle()
+    try:
+        args.handle(args)
+    except:
+        logger.exception("ops")
 
     # init()
     # configure_app("ad_automator_test", Path("/tmp/ad_automator_test"))
