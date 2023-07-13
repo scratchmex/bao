@@ -1,7 +1,9 @@
-[apps.ad_automator_prod]
-domain = "adautomator.com" 
+[apps.myapp_prod]
+domain = "myapp.com" 
 procfile = "Procfile" # default
+static = "myapp/static"
 
-[apps.ad_automator_test]
-domain = "test.adautomator.com"
+[apps.myapp_test]
+domain = "test.myapp.com"
 procfile = "Procfile.test"
+static = "myapp/static"

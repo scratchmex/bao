@@ -69,7 +69,7 @@ def parse_procfile(content: str):
     return Procfile(web_cmd=web_cmd)
 
 
-def get_app_caddyfile_config(domain: str, app_root_src_path: str, port: int):
+def get_app_caddyfile_config(domain: str, app_root_src_path: str, port: int, static_path: str):
     return (
         """
 {domain} {
@@ -77,7 +77,7 @@ def get_app_caddyfile_config(domain: str, app_root_src_path: str, port: int):
 
     handle_path /static/* {
         file_server {
-            root {app_root_src_path}/static
+            root {app_root_src_path}/{static_path}
         }
     }
 }
@@ -85,12 +85,14 @@ def get_app_caddyfile_config(domain: str, app_root_src_path: str, port: int):
         .replace("{domain}", domain)
         .replace("{app_root_src_path}", str(app_root_src_path))
         .replace("{port}", str(port))
+        .replace("{static_path}", static_path)
     )
 
 
 @dataclass
 class BaoConfigApp:
     domain: str
+    static: str
     procfile: str = "Procfile"
 
 
@@ -105,9 +107,9 @@ def add_app(app_name: str):
     """
     apps/
         <appname>/
-            root_src/ (source code)
-            git/ (git bare repo)
-            systemd.service
+            code/ (source code)
+            repo/ (git bare repo)
+            <appname>.service
             Caddyfile
 
     """
@@ -162,23 +164,18 @@ def deploy_app(app_name: str):
         working_directory=app_code_path,
         description=f"{app_name} configured by bao",
     )
-    app_service_path = app_path / "systemd.service"
+    app_service_path = app_path / f"{app_name}.service"
     with open(app_service_path, "w") as f:
         f.write(systemctl_config)
 
-    app_service_name = f"{app_name}.service"
-    app_service_symlink_path = SYSTEMDFILES_PATH / app_service_name
-    if app_service_symlink_path.is_symlink():
-        app_service_symlink_path.unlink()
-    app_service_symlink_path.symlink_to(app_service_path)
-
-    subprocess.run(["systemctl", "--user", "enable", app_service_name], check=True)
+    subprocess.run(["systemctl", "--user", "enable", app_service_path], check=True)
 
     # -- configure caddy
     app_caddy_config = get_app_caddyfile_config(
         domain=app_config.domain,
         app_root_src_path=app_code_path,
         port=app_port,
+        static_path=app_config.static
     )
     app_caddy_config_path = app_path / "Caddyfile"
     app_caddy_config_path.write_text(app_caddy_config)
@@ -189,7 +186,7 @@ def deploy_app(app_name: str):
 
     # -- start app
     subprocess.run(["sudo", "systemctl", "reload", "caddy"], check=True)
-    subprocess.run(["systemctl", "--user", "start", app_service_name], check=True)
+    subprocess.run(["systemctl", "--user", "start", app_name], check=True)
 
 
 def remove_app(app_name: str):
@@ -288,8 +285,7 @@ def init():
     caddyfiles/
         Caddyfile
         <appname> -> ../apps/<appname>/Caddyfile
-    systemdfiles/
-        <appname>.service -> ../apps/<appname>/systemd.service
+    systemdfiles -> .config/systemd/user
     """
     subprocess.run("sudo echo 'sudo access ok'", shell=True, check=True)
 
@@ -307,11 +303,6 @@ def init():
     (ROOT_PATH / "systemdfiles").symlink_to(ROOT_PATH / ".config/systemd/user")
 
     # -- install deps
-    # -- configure poetry
-    subprocess.run(
-        [POETRY_PATH, "config", "virtualenvs.in-project", "true"],
-        check=True,
-    )
 
     init_systemctl()
 
@@ -322,6 +313,11 @@ def init():
     subprocess.run(["sudo", "chmod", "-R", "o=rx", str(ROOT_PATH)], check=True)
     subprocess.run(["sudo", "chown", "-R", "bao:bao", str(ROOT_PATH)], check=True)
 
+    # -- configure poetry
+    subprocess.run(
+        ["sudo", "-iu", "bao", "poetry", "config", "virtualenvs.in-project", "true"],
+        check=True,
+    )
 
 # --- CLI commands
 def cmd_init(args: argparse.Namespace):
