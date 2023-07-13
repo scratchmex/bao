@@ -329,7 +329,7 @@ def init():
 
     # -- install deps
     # -- configure poetry
-    subprocess.run(["poetry", "config", "virtualenvs.in-project", "true"])
+    subprocess.run(["sudo", "-iu", "bao", "poetry", "config", "virtualenvs.in-project", "true"], check=True)
 
     init_systemctl()
 
