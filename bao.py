@@ -27,6 +27,7 @@ APPS_ROOT_PATH = ROOT_PATH / "apps"
 CADDYFILES_PATH = ROOT_PATH / "caddyfiles"
 SYSTEMDFILES_PATH = ROOT_PATH / "systemdfiles"
 SYSTEMCTL_RESTART_INTERVAL = 3
+POETRY_PATH = "/home/bao/.local/bin/poetry"
 
 
 def get_systemctl_config(web_cmd: str, working_directory: str, description: str):
@@ -115,47 +116,50 @@ def add_app(app_name: str):
 
 def deploy_app(app_name: str):
     app_path = APPS_ROOT_PATH / app_name
-    app_root_src_path = app_path / "root_src"
+    app_code_path = app_path / "code"
 
-    if not (app_root_src_path / "bao.toml").exists():
+    if not (app_code_path / "bao.toml").exists():
         logger.info("bao.toml not detected")
         sys.exit(1)
 
-    if not (app_root_src_path / "pyproject.toml").exists():
+    if not (app_code_path / "pyproject.toml").exists():
         logger.info("pyproject.toml not detected")
         sys.exit(1)
 
     # -- parse project config
-    with open(app_root_src_path / "bao.toml") as f:
-        bao_config = BaoConfig(**tomllib.load(f))
+    with open(app_code_path / "bao.toml", "rb") as f:
+        data = tomllib.load(f)
+    bao_config = BaoConfig(apps={s: BaoConfigApp(**d) for s, d in data["apps"].items()})
 
     app_config = bao_config.apps.get(app_name)
     if not app_config:
         logger.info(f"{app_name} not found in bao config")
         sys.exit(1)
 
-    if not (app_root_src_path / app_config.procfile).exists():
+    logger.info(f"config: {app_config}")
+
+    if not (app_code_path / app_config.procfile).exists():
         logger.info(f"{app_config.procfile} not detected")
         sys.exit(1)
 
-    with open(app_root_src_path / app_config.procfile) as f:
+    with open(app_code_path / app_config.procfile) as f:
         procfile = parse_procfile(f.read())
 
     # -- configure poetry
-    subprocess.run(["poetry", "install"], cwd=app_root_src_path, check=True)
-    subprocess.run([str(app_root_src_path / ".venv/bin/python"), "-V"], check=True)
+    subprocess.run([POETRY_PATH, "install"], cwd=app_code_path, check=True)
+    subprocess.run([str(app_code_path / ".venv/bin/python"), "-V"], check=True)
     # TODO: remove check=True and do proper validation and printing
 
     # -- configure systemctl
     web_cmd = procfile.web_cmd
-    app_port = 8000
+    app_port = 9999
     # TODO: look for ports
     web_cmd = web_cmd.replace("$PORT", str(app_port))
     logger.info(f"will use the following web cmd: {web_cmd!r}")
 
     systemctl_config = get_systemctl_config(
-        web_cmd=f"{app_root_src_path / '.venv/bin'}/{web_cmd}",
-        working_directory=app_root_src_path,
+        web_cmd=f"{app_code_path / '.venv/bin'}/{web_cmd}",
+        working_directory=app_code_path,
         description=f"{app_name} configured by bao",
     )
     app_service_path = app_path / "systemd.service"
@@ -173,7 +177,7 @@ def deploy_app(app_name: str):
     # -- configure caddy
     app_caddy_config = get_app_caddyfile_config(
         domain=app_config.domain,
-        app_root_src_path=app_root_src_path,
+        app_root_src_path=app_code_path,
         port=app_port,
     )
     app_caddy_config_path = app_path / "Caddyfile"
@@ -226,6 +230,7 @@ def init_caddy():
     global_caddyfile = Path("/etc/caddy/Caddyfile")
 
     config = f"""
+
 # --- added by bao
 import {CADDYFILES_PATH!s}/*
 
@@ -235,7 +240,7 @@ import {CADDYFILES_PATH!s}/*
         existent_config = global_caddyfile.read_text()
         if config in existent_config:
             config = ""
-        config += existent_config
+        config = existent_config + config
 
     with tempfile.NamedTemporaryFile("w", delete=False) as tf:
         tf.write(config)
@@ -304,7 +309,7 @@ def init():
     # -- install deps
     # -- configure poetry
     subprocess.run(
-        ["sudo", "-iu", "bao", "poetry", "config", "virtualenvs.in-project", "true"],
+        [POETRY_PATH, "config", "virtualenvs.in-project", "true"],
         check=True,
     )
 
@@ -359,7 +364,7 @@ cat | /home/bao/bao.py git-hook {app_name}
 
     # add_app(app_name)
 
-    # deploy_app(app_name)
+    
 
 
 def cmd_git_hook(args: argparse.Namespace):
@@ -381,12 +386,19 @@ def cmd_git_hook(args: argparse.Namespace):
         check=False,
     )
 
-
     code_path = app_path / "code"
     # FIXME: "fatal: not a git repository: '.'"
     subprocess.run(["ls", "-la"], cwd=code_path)
-    subprocess.run(["git", "fetch"], cwd=code_path)
-    subprocess.run(["git", "reset", "--hard", newrev], cwd=code_path)
+    subprocess.run(
+        ["git", "fetch"],
+        cwd=code_path,
+        env={"GIT_DIR": str(code_path / ".git")},
+    )
+    subprocess.run(
+        ["git", "reset", "--hard", newrev],
+        cwd=code_path,
+        env={"GIT_DIR": str(code_path / ".git")},
+    )
 
     deploy_app(app_name)
 
