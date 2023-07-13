@@ -17,7 +17,7 @@ from pathlib import Path
 from dataclasses import dataclass
 
 
-logging.basicConfig(filename="default.log", level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ class BaoConfig:
     apps: dict[str, BaoConfigApp]
 
 
-def add_app(app_name: str, tmp_path: Path):
+def add_app(app_name: str):
     """
     apps/
         <appname>/
@@ -110,33 +110,7 @@ def add_app(app_name: str, tmp_path: Path):
             Caddyfile
 
     """
-    if not (tmp_path / "git").is_dir():
-        logger.info("could not find git repo")
-        sys.exit(1)
-
-    # -- move files to our domain
-    app_path = APPS_ROOT_PATH / app_name
-    shutil.move(tmp_path, app_path)
-
-    git_path = app_path / "git"
-    git_hook_path = git_path / "hooks" / "post-receive"
-
-    with open(git_hook_path, "w") as f:
-        f.write("""#!/usr/bin/env bash
-set -e; set -o pipefail;
-cat | /home/bao/bao.py git-hook
-""")
-    git_hook_path.chmod(git_hook_path.stat().st_mode | stat.S_IXUSR)
-
-    res = subprocess.run(
-        ["git", "branch", "-l"], cwd=git_path, stdout=subprocess.PIPE, check=True
-    )
-    any_branch_name = res.stdout.decode().strip().splitlines()[-1]
-    subprocess.run(
-        ["git", "clone", "git", "root_src", "-b", any_branch_name],
-        cwd=app_path,
-        check=True,
-    )
+    pass
 
 
 def deploy_app(app_name: str):
@@ -329,7 +303,10 @@ def init():
 
     # -- install deps
     # -- configure poetry
-    subprocess.run(["sudo", "-iu", "bao", "poetry", "config", "virtualenvs.in-project", "true"], check=True)
+    subprocess.run(
+        ["sudo", "-iu", "bao", "poetry", "config", "virtualenvs.in-project", "true"],
+        check=True,
+    )
 
     init_systemctl()
 
@@ -354,38 +331,64 @@ def cmd_del(args: argparse.Namespace):
 def cmd_git_receive_pack(args: argparse.Namespace):
     app_name: str = args.app_name[1:-1]  # remove quotes
     app_path = APPS_ROOT_PATH / app_name
+    repo_path = app_path / "repo"
 
-    tmp_dir = None  # if not None it means it is a new app
+    app_path.mkdir(exist_ok=True)
 
-    if not app_path.is_dir():
-        tmp_dir = tempfile.TemporaryDirectory()
-        app_path = Path(tmp_dir.name)
+    if not repo_path.is_dir():
         subprocess.run(
-            ["git", "init", "--bare", "git"],
+            ["git", "init", "--bare", "--quiet", "repo"],
             cwd=app_path,
             check=True,
-            stdout=subprocess.DEVNULL,
         )
 
-    logger.info(f"cwd {app_path}")
+    git_hook_path = repo_path / "hooks" / "post-receive"
+    if not git_hook_path.is_file():
+        with open(git_hook_path, "w") as f:
+            f.write(
+                f"""#!/usr/bin/bash
+set -e; set -o pipefail;
+cat | /home/bao/bao.py git-hook {app_name}
+"""
+            )
+        git_hook_path.chmod(git_hook_path.stat().st_mode | stat.S_IEXEC)
 
-    print("---------> before")
     subprocess.run(
-        ["git", "shell", "-c", "git receive-pack 'git'"], cwd=app_path, check=True
+        ["git", "shell", "-c", "git receive-pack 'repo'"], cwd=app_path, check=True
     )
-    print("---------> after")
 
-    if tmp_dir:
-        add_app(app_name, app_path)
-        tmp_dir.cleanup()
+    # add_app(app_name)
 
     # deploy_app(app_name)
 
 
 def cmd_git_hook(args: argparse.Namespace):
-    logger.info("git-hook called")
-    for line in sys.stdin:
-        logger.debug(line)
+    app_name = args.app_name
+    app_path = APPS_ROOT_PATH / app_name
+    logger.info(f"--- post-receive hook called for {app_name}")
+
+    lines = list(sys.stdin)
+    if len(lines) != 1:
+        print(f"I don't know what do to with this input: {lines}")
+
+    oldrev, newrev, refname = lines[0].strip().split(" ")
+
+    app_path = APPS_ROOT_PATH / app_name
+
+    subprocess.run(
+        ["git", "clone", "repo", "code"],
+        cwd=app_path,
+        check=False,
+    )
+
+
+    code_path = app_path / "code"
+    # FIXME: "fatal: not a git repository: '.'"
+    subprocess.run(["ls", "-la"], cwd=code_path)
+    subprocess.run(["git", "fetch"], cwd=code_path)
+    subprocess.run(["git", "reset", "--hard", newrev], cwd=code_path)
+
+    deploy_app(app_name)
 
 
 if __name__ == "__main__":
@@ -405,10 +408,11 @@ if __name__ == "__main__":
     git_receive_pack_parser.add_argument("app_name")
     git_receive_pack_parser.set_defaults(handle=cmd_git_receive_pack)
 
-    git_receive_pack_parser = subparser.add_parser(
+    git_hook_parser = subparser.add_parser(
         "git-hook", description="[internal git] used in post-receive hook"
     )
-    git_receive_pack_parser.set_defaults(handle=cmd_git_hook)
+    git_hook_parser.add_argument("app_name")
+    git_hook_parser.set_defaults(handle=cmd_git_hook)
 
     # logger.info("[Bao]")
     # logger.info(f"{sys.argv=}")
