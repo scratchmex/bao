@@ -17,7 +17,7 @@ from pathlib import Path
 from dataclasses import dataclass
 
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG, format="{levelname} {message}", style="{")
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,9 @@ def parse_procfile(content: str):
     return Procfile(web_cmd=web_cmd)
 
 
-def get_app_caddyfile_config(domain: str, app_root_src_path: str, port: int, static_path: str):
+def get_app_caddyfile_config(
+    domain: str, app_root_src_path: str, port: int, static_path: str
+):
     return (
         """
 {domain} {
@@ -157,7 +159,7 @@ def deploy_app(app_name: str):
     app_port = 9999
     # TODO: look for ports
     web_cmd = web_cmd.replace("$PORT", str(app_port))
-    logger.info(f"will use the following web cmd: {web_cmd!r}")
+    logger.info(f"--- web cmd: {web_cmd!r}")
 
     systemctl_config = get_systemctl_config(
         web_cmd=f"{app_code_path / '.venv/bin'}/{web_cmd}",
@@ -175,7 +177,7 @@ def deploy_app(app_name: str):
         domain=app_config.domain,
         app_root_src_path=app_code_path,
         port=app_port,
-        static_path=app_config.static
+        static_path=app_config.static,
     )
     app_caddy_config_path = app_path / "Caddyfile"
     app_caddy_config_path.write_text(app_caddy_config)
@@ -186,7 +188,9 @@ def deploy_app(app_name: str):
 
     # -- start app
     subprocess.run(["sudo", "systemctl", "reload", "caddy"], check=True)
-    subprocess.run(["systemctl", "--user", "start", app_name], check=True)
+    logger.info("caddy reloaded")
+    subprocess.run(["systemctl", "--user", "restart", app_name], check=True)
+    logger.info(f"{app_name} service restarted")
 
 
 def remove_app(app_name: str):
@@ -319,6 +323,7 @@ def init():
         check=True,
     )
 
+
 # --- CLI commands
 def cmd_init(args: argparse.Namespace):
     init()
@@ -359,8 +364,6 @@ cat | /home/bao/bao.py git-hook {app_name}
     )
 
     # add_app(app_name)
-
-    
 
 
 def cmd_git_hook(args: argparse.Namespace):
