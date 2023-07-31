@@ -2,6 +2,7 @@
 import argparse
 import io
 import logging
+import socket
 import stat
 import sys
 
@@ -118,6 +119,16 @@ def add_app(app_name: str):
     pass
 
 
+def get_free_port():
+    """Find a free TCP port (entirely at random)"""
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("", 0))  # lgtm [py/bind-socket-all-network-interfaces]
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
 def deploy_app(app_name: str):
     app_path = APPS_ROOT_PATH / app_name
     app_code_path = app_path / "code"
@@ -154,10 +165,15 @@ def deploy_app(app_name: str):
     subprocess.run([str(app_code_path / ".venv/bin/python"), "-V"], check=True)
     # TODO: remove check=True and do proper validation and printing
 
+    # -- configure node
+    # this is useful for assets generated with vite for example
+    if (app_code_path / "package.json").exists():
+        subprocess.run(["yarn", "install"], cwd=app_code_path, check=True)
+
     # -- configure systemctl
     web_cmd = procfile.web_cmd
-    app_port = 9999
-    # TODO: look for ports
+    app_port = get_free_port()
+    # TODO: maybe use the same port when redeploying?
     web_cmd = web_cmd.replace("$PORT", str(app_port))
     logger.info(f"--- web cmd: {web_cmd!r}")
 

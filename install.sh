@@ -12,7 +12,12 @@ sudo chown bao:bao /home/bao/.ssh/authorized_keys
 sudo cp bao.py /home/bao
 sudo chmod +x /home/bao/bao.py
 sudo chown bao:bao /home/bao/bao.py
+
+echo "[--] installing deps"
 sudo su - bao -c 'curl -sSL https://install.python-poetry.org | python3 -'
+sudo apt update && sudo apt install nodejs npm
+sudo npm install --global yarn
+
 /home/bao/bao.py init
 
 echo "[==] installed :)"
