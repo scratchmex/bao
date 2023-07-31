@@ -15,8 +15,9 @@ sudo chown bao:bao /home/bao/bao.py
 
 echo "[--] installing deps"
 sudo su - bao -c 'curl -sSL https://install.python-poetry.org | python3 -'
-sudo apt update && sudo apt install nodejs npm
-sudo npm install --global yarn
+sudo su - bao -c 'curl https://raw.githubusercontent.com/creationix/nvm/master/install.sh | bash'
+sudo su - bao -c '. '~/.nvm/nvm.sh'; nvm install --lts'
+sudo su - bao -c '. '~/.nvm/nvm.sh'; npm install --global yarn'
 
 /home/bao/bao.py init
 

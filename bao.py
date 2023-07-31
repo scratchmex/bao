@@ -168,7 +168,8 @@ def deploy_app(app_name: str):
     # -- configure node
     # this is useful for assets generated with vite for example
     if (app_code_path / "package.json").exists():
-        subprocess.run(["yarn", "install"], cwd=app_code_path, check=True)
+        subprocess.run(["yarn", "install"], cwd=app_code_path, check=True, shell=True)
+        # shell because we need nvm env
 
     # -- configure systemctl
     web_cmd = procfile.web_cmd
