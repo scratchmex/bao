@@ -375,6 +375,7 @@ cat | /home/bao/bao.py git-hook {app_name}
             )
         git_hook_path.chmod(git_hook_path.stat().st_mode | stat.S_IEXEC)
 
+    # FIXME: redeploy when unsuccessfully last deployment even though we have the code
     subprocess.run(
         ["git", "shell", "-c", "git receive-pack 'repo'"], cwd=app_path, check=True
     )
