@@ -2,6 +2,7 @@
 import argparse
 import io
 import logging
+import os
 import socket
 import stat
 import sys
@@ -28,7 +29,7 @@ APPS_ROOT_PATH = ROOT_PATH / "apps"
 CADDYFILES_PATH = ROOT_PATH / "caddyfiles"
 SYSTEMDFILES_PATH = ROOT_PATH / "systemdfiles"
 SYSTEMCTL_RESTART_INTERVAL = 3
-POETRY_PATH = "/home/bao/.local/bin/poetry"
+BAO_BIN_PATH = "/home/bao/.local/bin"
 
 
 def get_systemctl_config(web_cmd: str, working_directory: str, description: str):
@@ -161,15 +162,24 @@ def deploy_app(app_name: str):
         procfile = parse_procfile(f.read())
 
     # -- configure poetry
-    subprocess.run([POETRY_PATH, "install"], cwd=app_code_path, check=True)
+    subprocess.run(
+        ["poetry", "install"],
+        cwd=app_code_path,
+        check=True,
+        env={"PATH": f"{BAO_BIN_PATH}:{os.environ['PATH']}"},
+    )
     subprocess.run([str(app_code_path / ".venv/bin/python"), "-V"], check=True)
     # TODO: remove check=True and do proper validation and printing
 
     # -- configure node
     # this is useful for assets generated with vite for example
     if (app_code_path / "package.json").exists():
-        subprocess.run(["yarn", "install"], cwd=app_code_path, check=True, shell=True)
-        # shell because we need nvm env
+        subprocess.run(
+            ["yarn", "install"],
+            cwd=app_code_path,
+            check=True,
+            env={"PATH": f"{BAO_BIN_PATH}:{os.environ['PATH']}"},
+        )
 
     # -- configure systemctl
     web_cmd = procfile.web_cmd
