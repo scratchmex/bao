@@ -17,7 +17,8 @@ echo "[--] installing deps"
 sudo su - bao -c 'curl -sSL https://install.python-poetry.org | python3 -'
 sudo su - bao -c 'curl https://raw.githubusercontent.com/creationix/nvm/master/install.sh | bash'
 sudo su - bao -c '. ~/.nvm/nvm.sh && nvm install --lts'
-sudo su - bao -c '. ~/.nvm/nvm.sh && npm install --global yarn && ln -sf $(which yarn) ~/.local/bin/ && ln -sf $(which node) ~/.local/bin/'
+sudo su - bao -c '. ~/.nvm/nvm.sh && npm install --global yarn'
+sudo su - bao -c '. ~/.nvm/nvm.sh && ln -sf $(which node) ~/.local/bin/ && ln -sf $(which npm) ~/.local/bin/ && ln -sf $(which yarn) ~/.local/bin/'
 
 /home/bao/bao.py init
 

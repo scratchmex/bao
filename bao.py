@@ -52,13 +52,23 @@ WantedBy=default.target
 @dataclass
 class Procfile:
     web_cmd: str
+    release_cmd: str
 
 
 def parse_procfile(content: str):
     web_cmd = None
+    release_cmd = None
     for line in content.splitlines():
         if line.startswith("web:"):
+            if web_cmd:
+                logger.error("cannot have >1 web:")
+                sys.exit(1)
             web_cmd = line.split(":", maxsplit=1)[-1].strip()
+        elif line.startswith("release:"):
+            if release_cmd:
+                logger.error("cannot have >1 release:")
+                sys.exit(1)
+            release_cmd = line.split(":", maxsplit=1)[-1].strip()
 
     if not web_cmd.startswith("python"):
         logger.info("web cmd should start with python")
@@ -68,7 +78,7 @@ def parse_procfile(content: str):
         logger.info("$PORT is not present on web cmd")
         sys.exit(1)
 
-    return Procfile(web_cmd=web_cmd)
+    return Procfile(web_cmd=web_cmd, release_cmd=release_cmd)
 
 
 def get_app_caddyfile_config(
@@ -212,6 +222,15 @@ def deploy_app(app_name: str):
     if (CADDYFILES_PATH / app_name).is_symlink():
         (CADDYFILES_PATH / app_name).unlink()
     (CADDYFILES_PATH / app_name).symlink_to(app_caddy_config_path)
+
+    # -- release cmd
+    subprocess.run(
+        procfile.release_cmd,
+        cwd=app_code_path,
+        check=True,
+        shell=True,
+        env={"PATH": f"{BAO_BIN_PATH}:{os.environ['PATH']}"},
+    )
 
     # -- start app
     subprocess.run(["sudo", "systemctl", "reload", "caddy"], check=True)

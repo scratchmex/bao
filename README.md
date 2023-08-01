@@ -7,3 +7,7 @@ it will use
 - gunicorn for wsgi
 - caddy for reverse webserver
 - systemctl as a manager
+
+heavily inspired by
+- [piku](https://github.com/piku/piku)
+- [sailor](https://github.com/mardix/sailor)
